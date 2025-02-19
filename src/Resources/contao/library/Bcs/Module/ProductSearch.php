@@ -50,6 +50,7 @@ class ProductSearch extends ProductList
     
     protected function compile()
     {
+        
         // Check if we have a SKU in our URL
         if (Input::get('sku') != '') {
             
@@ -58,14 +59,41 @@ class ProductSearch extends ProductList
             $arrProducts   = array();
             $arrCacheIds   = null;
             
-            // Pass in our parent's ID to the custom find products function
-            $tmp_prods = $this->findProductsBySKU(Input::get('sku'));
+            // Convert SKUS into array
+            $get_skus = Input::get('sku');
+            $get_skus = str_replace("%2C", ",", $get_skus);
+            $get_skus = str_replace(", ", ",", $get_skus);
             
             
-            // Success, at this point we have successfully found our stuffs
-            foreach($tmp_prods as $prod) {
-                $arrProducts[] = $prod;
+            
+            $skus = explode(",", Input::get('sku'));
+            // Loop through each SKU
+            foreach($skus as $sku) {
+                
+                // Pass in our parent's ID to the custom find products function
+                $prod = $this->findProductBySKU($sku);
+                // Success, at this point we have successfully found our stuffs
+                foreach($prod as $p) {
+                    
+                    $parent = Product::findBy('pid', $p->pid);
+            		if ($parent) {
+                        while($parent->next()) {
+                            
+                            //echo "<pre>";
+                            //print_r($parent);
+                            //die();
+                            //echo "P NAME: " . $parent->name;
+                            //die();
+                            
+            			    $p->parent_name = $parent->name;
+                        }
+            		}
+                    
+                    $arrProducts[] = $p;
+                }
+                
             }
+            
     
         
             if (!\is_array($arrProducts)) {
@@ -268,7 +296,7 @@ class ProductSearch extends ProductList
     }
 
      // Custom function that returns an array of products that the user previously ordered
-    protected function findProductsBySKU($sku, $arrCacheIds = null)
+    protected function findProductBySKU($sku, $arrCacheIds = null)
     {
         $arrProducts = [];
     	$arrIds = [];	
