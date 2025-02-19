@@ -52,181 +52,179 @@ class ProductSearch extends ProductList
     
     protected function compile()
     {
-
-        global $objPage;
-        $cacheKey      = $this->getCacheKey();
-        $arrProducts   = array();
-        $arrCacheIds   = null;
-        
-        
-        // Get the parent alias, by subtracting the page alias from the environment request
-        $alias = str_replace($objPage->alias . '/', "", Environment::get('request'));
-        // Get the product that has this alias, as it is our parent product
-        $parentProd = Product::findOneBy(['tl_iso_product.alias=?'],[$alias]);
-        // Pass in our parent's ID to the custom find products function
-        $tmp_prods = $this->findOrderedProducts($parentProd->id);
-        
-        
-        // Success, at this point we have successfully found our stuffs
-        foreach($tmp_prods as $prod) {
-            $arrProducts[] = $prod;
-        }
-
+        // Check if we have a SKU in our URL
+        if (Input::get('sku') != '') {
+            
+            global $objPage;
+            $cacheKey      = $this->getCacheKey();
+            $arrProducts   = array();
+            $arrCacheIds   = null;
+            
+            // Pass in our parent's ID to the custom find products function
+            $tmp_prods = $this->findProductsBySKU(Input::get('sku'));
+            
+            
+            // Success, at this point we have successfully found our stuffs
+            foreach($tmp_prods as $prod) {
+                $arrProducts[] = $prod;
+            }
     
-        if (!\is_array($arrProducts)) {
-            // Display "loading products" message and add cache flag
-            if ($this->blnCacheProducts) {
-                $blnCacheMessage = (bool) ($this->iso_productcache[$cacheKey] ?? false);
-
-                if ($blnCacheMessage && !Input::get('buildCache')) {
-                    // Do not index or cache the page
-                    $objPage->noSearch = 1;
-                    $objPage->cache    = 0;
-
-                    $this->Template          = new Template('mod_iso_productlist_caching');
-                    $this->Template->message = $GLOBALS['TL_LANG']['MSC']['productcacheLoading'];
-
-                    return;
-                }
-
-                // Start measuring how long it takes to load the products
-                $start = microtime(true);
-
-                // Load products
-                $arrProducts = $this->findProducts($arrCacheIds);
-
-                // Decide if we should show the "caching products" message the next time
-                $end = microtime(true) - $start;
-                $this->blnCacheProducts = $end > 1;
-
-                $arrCacheMessage = $this->iso_productcache;
-                if ($blnCacheMessage !== $this->blnCacheProducts) {
-                    $arrCacheMessage[$cacheKey] = $this->blnCacheProducts;
-
-                    $data = serialize($arrCacheMessage);
-
-                    // Automatically clear iso_productcache if it exceeds the blob field length
-                    if (strlen($data) > 65535) {
-                        $data = serialize([$cacheKey => $this->blnCacheProducts]);
+        
+            if (!\is_array($arrProducts)) {
+                // Display "loading products" message and add cache flag
+                if ($this->blnCacheProducts) {
+                    $blnCacheMessage = (bool) ($this->iso_productcache[$cacheKey] ?? false);
+    
+                    if ($blnCacheMessage && !Input::get('buildCache')) {
+                        // Do not index or cache the page
+                        $objPage->noSearch = 1;
+                        $objPage->cache    = 0;
+    
+                        $this->Template          = new Template('mod_iso_productlist_caching');
+                        $this->Template->message = $GLOBALS['TL_LANG']['MSC']['productcacheLoading'];
+    
+                        return;
                     }
-
-                    Database::getInstance()
-                        ->prepare('UPDATE tl_module SET iso_productcache=? WHERE id=?')
-                        ->execute($data, $this->id)
-                    ;
-                }
-
-                // Do not write cache if table is locked. That's the case if another process is already writing cache
-                if (ProductCache::isWritable()) {
-                    Database::getInstance()
-                        ->lockTables(array(ProductCache::getTable() => 'WRITE', 'tl_iso_product' => 'READ'))
-                    ;
-
-                    $arrIds = array();
-                    foreach ($arrProducts as $objProduct) {
-                        $arrIds[] = $objProduct->id;
+    
+                    // Start measuring how long it takes to load the products
+                    $start = microtime(true);
+    
+                    // Load products
+                    $arrProducts = $this->findProducts($arrCacheIds);
+    
+                    // Decide if we should show the "caching products" message the next time
+                    $end = microtime(true) - $start;
+                    $this->blnCacheProducts = $end > 1;
+    
+                    $arrCacheMessage = $this->iso_productcache;
+                    if ($blnCacheMessage !== $this->blnCacheProducts) {
+                        $arrCacheMessage[$cacheKey] = $this->blnCacheProducts;
+    
+                        $data = serialize($arrCacheMessage);
+    
+                        // Automatically clear iso_productcache if it exceeds the blob field length
+                        if (strlen($data) > 65535) {
+                            $data = serialize([$cacheKey => $this->blnCacheProducts]);
+                        }
+    
+                        Database::getInstance()
+                            ->prepare('UPDATE tl_module SET iso_productcache=? WHERE id=?')
+                            ->execute($data, $this->id)
+                        ;
                     }
-
-                    // Delete existing cache if necessary
-                    ProductCache::deleteByUniqidOrExpired($cacheKey);
-
-                    $objCache          = ProductCache::createForUniqid($cacheKey);
-                    $objCache->expires = $this->getProductCacheExpiration();
-                    $objCache->setProductIds($arrIds);
-                    $objCache->save();
-
-                    Database::getInstance()->unlockTables();
-                }
-            } else {
-                $arrProducts = $this->findProducts();
-            }
-
-            if (!empty($arrProducts)) {
-                $arrProducts = $this->generatePagination($arrProducts);
-            }
-        }
-
-        // No products found
-        if (!\is_array($arrProducts) || empty($arrProducts)) {
-            $this->compileEmptyMessage();
-
-            return;
-        }
-
-        $arrBuffer         = array();
-        $arrDefaultOptions = $this->getDefaultProductOptions();
-
-        // Prepare optimized product categories
-        $preloadData = $this->batchPreloadProducts();
-
-        /** @var \Isotope\Model\Product\Standard $objProduct */
-        foreach ($arrProducts as $objProduct) {
-            if ($objProduct instanceof Product\Standard) {
-                if (isset($preloadData['categories'][$objProduct->id])) {
-                    $objProduct->setCategories($preloadData['categories'][$objProduct->id], true);
-                }
-                if (!$objProduct->hasAdvancedPrices()) {
-                    if ($objProduct->hasVariantPrices() && !$objProduct->isVariant()) {
-                        $ids = $objProduct->getVariantIds();
-                    } else {
-                        $ids = [$objProduct->hasVariantPrices() ? $objProduct->getId() : $objProduct->getProductId()];
+    
+                    // Do not write cache if table is locked. That's the case if another process is already writing cache
+                    if (ProductCache::isWritable()) {
+                        Database::getInstance()
+                            ->lockTables(array(ProductCache::getTable() => 'WRITE', 'tl_iso_product' => 'READ'))
+                        ;
+    
+                        $arrIds = array();
+                        foreach ($arrProducts as $objProduct) {
+                            $arrIds[] = $objProduct->id;
+                        }
+    
+                        // Delete existing cache if necessary
+                        ProductCache::deleteByUniqidOrExpired($cacheKey);
+    
+                        $objCache          = ProductCache::createForUniqid($cacheKey);
+                        $objCache->expires = $this->getProductCacheExpiration();
+                        $objCache->setProductIds($arrIds);
+                        $objCache->save();
+    
+                        Database::getInstance()->unlockTables();
                     }
-
-                    $prices = array_intersect_key($preloadData['prices'], array_flip($ids));
-
-                    if (!empty($prices)) {
-                        $objProduct->setPrice(new ProductPriceCollection($prices, ProductPrice::getTable()));
-                    }
+                } else {
+                    $arrProducts = $this->findProducts();
+                }
+    
+                if (!empty($arrProducts)) {
+                    $arrProducts = $this->generatePagination($arrProducts);
                 }
             }
-
-            $arrConfig = $this->getProductConfig($objProduct);
-
-            if (Environment::get('isAjaxRequest')
-                && Input::post('AJAX_MODULE') == $this->id
-                && Input::post('AJAX_PRODUCT') == $objProduct->getProductId()
-                && !$this->iso_disable_options
+    
+            // No products found
+            if (!\is_array($arrProducts) || empty($arrProducts)) {
+                $this->compileEmptyMessage();
+    
+                return;
+            }
+    
+            $arrBuffer         = array();
+            $arrDefaultOptions = $this->getDefaultProductOptions();
+    
+            // Prepare optimized product categories
+            $preloadData = $this->batchPreloadProducts();
+    
+            /** @var \Isotope\Model\Product\Standard $objProduct */
+            foreach ($arrProducts as $objProduct) {
+                if ($objProduct instanceof Product\Standard) {
+                    if (isset($preloadData['categories'][$objProduct->id])) {
+                        $objProduct->setCategories($preloadData['categories'][$objProduct->id], true);
+                    }
+                    if (!$objProduct->hasAdvancedPrices()) {
+                        if ($objProduct->hasVariantPrices() && !$objProduct->isVariant()) {
+                            $ids = $objProduct->getVariantIds();
+                        } else {
+                            $ids = [$objProduct->hasVariantPrices() ? $objProduct->getId() : $objProduct->getProductId()];
+                        }
+    
+                        $prices = array_intersect_key($preloadData['prices'], array_flip($ids));
+    
+                        if (!empty($prices)) {
+                            $objProduct->setPrice(new ProductPriceCollection($prices, ProductPrice::getTable()));
+                        }
+                    }
+                }
+    
+                $arrConfig = $this->getProductConfig($objProduct);
+    
+                if (Environment::get('isAjaxRequest')
+                    && Input::post('AJAX_MODULE') == $this->id
+                    && Input::post('AJAX_PRODUCT') == $objProduct->getProductId()
+                    && !$this->iso_disable_options
+                ) {
+                    $content = $objProduct->generate($arrConfig);
+                    $content = Controller::replaceInsertTags($content, false);
+    
+                    throw new ResponseException(new Response($content));
+                }
+    
+                $objProduct->mergeRow($arrDefaultOptions);
+    
+                // Must be done after setting options to generate the variant config into the URL
+                if ($this->iso_jump_first && Input::getAutoItem('product', false, true) == '') {
+                    throw new RedirectResponseException($objProduct->generateUrl($arrConfig['jumpTo'], true));
+                }
+    
+                $arrBuffer[] = array(
+                    'cssID'     => $objProduct->getCssId(),
+                    'class'     => $objProduct->getCssClass(),
+                    'html'      => $objProduct->generate($arrConfig),
+                    'product'   => $objProduct,
+                );
+            }
+    
+            // HOOK: to add any product field or attribute to mod_iso_productlist template
+            if (isset($GLOBALS['ISO_HOOKS']['generateProductList'])
+                && \is_array($GLOBALS['ISO_HOOKS']['generateProductList'])
             ) {
-                $content = $objProduct->generate($arrConfig);
-                $content = Controller::replaceInsertTags($content, false);
-
-                throw new ResponseException(new Response($content));
+                foreach ($GLOBALS['ISO_HOOKS']['generateProductList'] as $callback) {
+                    $arrBuffer = System::importStatic($callback[0])->{$callback[1]}($arrBuffer, $arrProducts, $this->Template, $this);
+                }
             }
-
-            $objProduct->mergeRow($arrDefaultOptions);
-
-            // Must be done after setting options to generate the variant config into the URL
-            if ($this->iso_jump_first && Input::getAutoItem('product', false, true) == '') {
-                throw new RedirectResponseException($objProduct->generateUrl($arrConfig['jumpTo'], true));
-            }
-
-            $arrBuffer[] = array(
-                'cssID'     => $objProduct->getCssId(),
-                'class'     => $objProduct->getCssClass(),
-                'html'      => $objProduct->generate($arrConfig),
-                'product'   => $objProduct,
-            );
+    
+            RowClass::withKey('class')
+                ->addCount('product_')
+                ->addEvenOdd('product_')
+                ->addFirstLast('product_')
+                ->addGridRows($this->iso_cols)
+                ->addGridCols($this->iso_cols)
+                ->applyTo($arrBuffer)
+            ;
+    
+            $this->Template->products = $arrBuffer;
         }
-
-        // HOOK: to add any product field or attribute to mod_iso_productlist template
-        if (isset($GLOBALS['ISO_HOOKS']['generateProductList'])
-            && \is_array($GLOBALS['ISO_HOOKS']['generateProductList'])
-        ) {
-            foreach ($GLOBALS['ISO_HOOKS']['generateProductList'] as $callback) {
-                $arrBuffer = System::importStatic($callback[0])->{$callback[1]}($arrBuffer, $arrProducts, $this->Template, $this);
-            }
-        }
-
-        RowClass::withKey('class')
-            ->addCount('product_')
-            ->addEvenOdd('product_')
-            ->addFirstLast('product_')
-            ->addGridRows($this->iso_cols)
-            ->addGridCols($this->iso_cols)
-            ->applyTo($arrBuffer)
-        ;
-
-        $this->Template->products = $arrBuffer;
     }
     
     
@@ -285,17 +283,11 @@ class ProductSearch extends ProductList
     
     
      // Custom function that returns an array of products that the user previously ordered
-    protected function findOrderedProducts($pid, $arrCacheIds = null)
+    protected function findProductsBySKU($sku, $arrCacheIds = null)
     {
-        
-        // Stores our templated products and their IDs to prevent duplicates
         $arrProducts = [];
-    		$arrIds = [];
-    		
-    		$arrProducts = Product::findBy(['tl_iso_product.published=?'],[1]);
-
-        
-        // Return our templates items/products
+    	$arrIds = [];	
+    	$arrProducts = Product::findBy(['tl_iso_product.sku=?'],[$sku]);
         return $arrProducts;
     }
     
