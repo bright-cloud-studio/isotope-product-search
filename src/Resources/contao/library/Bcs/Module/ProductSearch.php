@@ -33,8 +33,6 @@ use Isotope\Model\ProductCollection\Order;
 use Isotope\Interfaces\IsotopeProduct;
 
 
-
-
 use Contao\FrontendUser;
 
 class ProductSearch extends ProductList
@@ -226,12 +224,7 @@ class ProductSearch extends ProductList
             $this->Template->products = $arrBuffer;
         }
     }
-    
-    
-    
-    
-    
-    
+
     private function batchPreloadProducts()
     {
         $query = "SELECT c.pid, GROUP_CONCAT(c.page_id) AS page_ids FROM tl_iso_product_category c JOIN tl_page p ON c.page_id=p.id WHERE p.type!='error_403' AND p.type!='error_404'";
@@ -273,15 +266,7 @@ class ProductSearch extends ProductList
 
         return $data;
     }
-    
-    
-    
-    
-    
-    
-    
-    
-    
+
      // Custom function that returns an array of products that the user previously ordered
     protected function findProductsBySKU($sku, $arrCacheIds = null)
     {
@@ -290,10 +275,5 @@ class ProductSearch extends ProductList
     	$arrProducts = Product::findBy(['tl_iso_product.sku=?'],[$sku]);
         return $arrProducts;
     }
-    
-    
-    
 
-
-  
 }
