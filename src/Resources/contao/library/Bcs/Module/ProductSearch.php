@@ -54,6 +54,8 @@ class ProductSearch extends ProductList
         // Check if we have a SKU in our URL
         if (Input::get('sku') != '') {
             
+            $this->Template->skus = explode(",", Input::get('sku'));
+            
             global $objPage;
             $cacheKey      = $this->getCacheKey();
             $arrProducts   = array();
